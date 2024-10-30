@@ -118,11 +118,24 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                     _ => unreachable!(),
                 });
         let vei = filter(|w: &Word| matches!(w.class, WordClass::Particle(ParticleFamily::Vei)));
+
+        let argument = choice((
+            filter(|w: &Word| matches!(w.class, WordClass::Particle(ParticleFamily::Ki))),
+            filter(|w: &Word| matches!(w.class, WordClass::Particle(ParticleFamily::Gi(_)))),
+        ));
+        let be = filter(|w: &Word| matches!(w.class, WordClass::Particle(ParticleFamily::Be)));
+        let argument_list = argument.repeated().then_ignore(be);
+
         let binding = element
             .clone()
             .then(
-                vi.then(predicate_tree.clone())
-                    .chain(fi.then(predicate_tree.clone()).repeated())
+                vi.then(argument_list.or_not())
+                    .then(predicate_tree.clone())
+                    .chain(
+                        fi.then(argument_list.or_not())
+                            .then(predicate_tree.clone())
+                            .repeated(),
+                    )
                     .then_ignore(vei.or_not())
                     .repeated(),
             )
@@ -148,13 +161,31 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                             (binding, r)
                         })
                         .chain(b.into_iter().flat_map(|b| {
-                            b.into_iter().map(|(pf, p)| {
+                            b.into_iter().map(|((pf, args), p)| {
                                 let binding = match pf {
                                     ParticleFamily::Vi { var, chain_with } => {
                                         (FiVar::Var(var), chain_with)
                                     }
                                     ParticleFamily::Fi { var, chain_with } => (var, chain_with),
                                     _ => unreachable!(),
+                                };
+                                let p = if let Some(args) = args {
+                                    match p.to_binding() {
+                                        PredicateTree::Binding {
+                                            chaining,
+                                            root,
+                                            sharers,
+                                            ..
+                                        } => PredicateTree::Binding {
+                                            exposure: Exposure::Explicit(args),
+                                            chaining,
+                                            root,
+                                            sharers,
+                                        },
+                                        _ => unreachable!(),
+                                    }
+                                } else {
+                                    p
                                 };
                                 (binding, p)
                             })

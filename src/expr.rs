@@ -88,6 +88,10 @@ fn to_expr_(
                     chain_place = vec.first().copied().unwrap_or(0);
                     exposed_places = vec.iter().copied().collect();
                 }
+                Exposure::Explicit(_) => {
+                    chain_place = 0;
+                    exposed_places = BTreeSet::new();
+                }
             };
             if matches!(chaining_with, PredicateChaining::Sharing) {
                 let chain_var = vars.remove(&0).unwrap_or_else(|| {
@@ -98,6 +102,35 @@ fn to_expr_(
                 });
                 vars.clear();
                 vars.insert(chain_place, chain_var);
+            }
+            if let Exposure::Explicit(vec) = &exposure {
+                for (i, explicit) in vec.iter().enumerate() {
+                    let var = vars.remove(&(i as u8)).unwrap_or_else(|| {
+                        let v = *max_var;
+                        orig_new_vars.push(v);
+                        *max_var += 1;
+                        v
+                    });
+                    match &explicit.class {
+                        crate::lexer::WordClass::Particle(crate::lexer::ParticleFamily::Ki) => {
+                            orig_preds.push(Predicate::Leaf {
+                                word: explicit.word.clone(),
+                                apply_to: BTreeMap::from([(0, var)]),
+                            })
+                        }
+                        crate::lexer::WordClass::Particle(crate::lexer::ParticleFamily::Gi(_)) => {
+                            orig_preds.push(Predicate::Equivalent {
+                                var,
+                                pred: Box::new(Predicate::Leaf {
+                                    word: explicit.word.clone(),
+                                    apply_to: BTreeMap::new(),
+                                }),
+                            })
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                vars.clear();
             }
 
             let closure_needed = sharers
