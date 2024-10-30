@@ -37,6 +37,8 @@ fn main() -> Res<()> {
         "sre bure",
         "sia sre bure",
         "mi dona sae dona mo",
+        "zaor cma kan gule ceru",
+        "blarin seo kce soai kolon cila",
     ];
 
     let lexer = lexer::<Simple<_>>();

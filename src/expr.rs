@@ -39,7 +39,14 @@ pub fn to_expr(tree: PredicateTree) -> (Predicate, Vec<Var>) {
         &mut max_var,
         &mut preds,
     );
-    (Predicate::And { preds }, new_vars)
+    (
+        if preds.len() == 1 {
+            preds.pop().unwrap()
+        } else {
+            Predicate::And { preds }
+        },
+        new_vars,
+    )
 }
 
 fn to_expr_(
@@ -63,10 +70,8 @@ fn to_expr_(
         } => {
             let exposed_places: BTreeSet<_>;
             let chain_place;
-            let transparent;
-            match exposure {
+            match &exposure {
                 Exposure::Standard => {
-                    transparent = false;
                     chain_place = 0;
                     exposed_places = match chaining_with {
                         PredicateChaining::Sharing => BTreeSet::from([0]),
@@ -76,12 +81,10 @@ fn to_expr_(
                     };
                 }
                 Exposure::Transparent => {
-                    transparent = true;
                     chain_place = 0;
                     exposed_places = (0..sharers.len()).map(|i| i as u8).collect();
                 }
                 Exposure::Modified(vec) => {
-                    transparent = false;
                     chain_place = vec.first().copied().unwrap_or(0);
                     exposed_places = vec.iter().copied().collect();
                 }
@@ -109,14 +112,20 @@ fn to_expr_(
                 (&mut *orig_new_vars, &mut *orig_preds)
             };
 
-            for (i, set) in sharers.into_iter().enumerate() {
+            for (i, set) in sharers.into_iter().enumerate().rev() {
                 let i = i as GrammarVar;
-                let var = *vars.entry(i).or_insert_with(|| {
-                    let v = *max_var;
-                    new_vars.push(v);
-                    *max_var += 1;
-                    v
-                });
+                let var = if !set.is_empty() {
+                    *vars.entry(i).or_insert_with(|| {
+                        let v = *max_var;
+                        new_vars.push(v);
+                        *max_var += 1;
+                        v
+                    })
+                } else {
+                    // irrelevant
+                    0
+                };
+
                 for (chaining, pred_tree) in set {
                     match chaining {
                         PredicateChaining::Sharing => to_expr_(
@@ -130,7 +139,7 @@ fn to_expr_(
                         PredicateChaining::Equivalence => {
                             let mut equiv_preds = Vec::new();
 
-                            if transparent {
+                            if matches!(exposure, Exposure::Transparent) {
                                 to_expr_(
                                     pred_tree,
                                     chaining,
