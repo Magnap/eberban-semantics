@@ -63,10 +63,11 @@ fn to_expr_(
             apply_to: vars,
         }),
         PredicateTree::Binding {
+            chaining: _,
             root,
             exposure,
             sharers,
-            ..
+            and,
         } => {
             let exposed_places: BTreeSet<_>;
             let chain_place;
@@ -103,6 +104,7 @@ fn to_expr_(
                 vars.clear();
                 vars.insert(chain_place, chain_var);
             }
+            // TODO make KI/GI scoped
             if let Exposure::Explicit(vec) = &exposure {
                 for (i, explicit) in vec.iter().enumerate() {
                     let var = vars.remove(&(i as u8)).unwrap_or_else(|| {
@@ -232,9 +234,37 @@ fn to_expr_(
             );
 
             if closure_needed {
+                let p = if new_preds.len() == 1 {
+                    new_preds.pop().unwrap()
+                } else {
+                    Predicate::And { preds: new_preds }
+                };
                 orig_preds.push(Predicate::Exists {
                     vars: new_new_vars,
-                    pred: Box::new(Predicate::And { preds: new_preds }),
+                    pred: Box::new(p),
+                });
+            }
+
+            for p in and {
+                let mut new_vars = Vec::new();
+                let mut preds = Vec::new();
+                to_expr_(
+                    p,
+                    PredicateChaining::Equivalence,
+                    BTreeMap::new(),
+                    &mut new_vars,
+                    max_var,
+                    &mut preds,
+                );
+
+                let p = if preds.len() == 1 {
+                    preds.pop().unwrap()
+                } else {
+                    Predicate::And { preds }
+                };
+                orig_preds.push(Predicate::Exists {
+                    vars: new_vars,
+                    pred: Box::new(p),
                 });
             }
         }

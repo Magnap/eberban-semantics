@@ -18,6 +18,7 @@ pub enum PredicateTree {
         root: Box<PredicateTree>,
         exposure: Exposure,
         sharers: Vec<BTreeSet<(PredicateChaining, PredicateTree)>>,
+        and: BTreeSet<PredicateTree>,
     },
 }
 
@@ -46,6 +47,7 @@ impl PredicateTree {
                 root: Box::new(l),
                 exposure: Exposure::Standard,
                 sharers: Vec::new(),
+                and: BTreeSet::new(),
             },
         }
     }
@@ -144,13 +146,14 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                 if matches!(l, PredicateTree::Leaf(_)) && b.is_empty() && r.is_none() {
                     l
                 } else {
-                    let (chaining, root, exposure, mut sharers) = match l.to_binding() {
+                    let (chaining, root, exposure, mut sharers, mut and) = match l.to_binding() {
                         PredicateTree::Binding {
                             chaining,
                             root,
                             exposure,
                             sharers,
-                        } => (chaining, root, exposure, sharers),
+                            and,
+                        } => (chaining, root, exposure, sharers, and),
                         _ => unreachable!(),
                     };
 
@@ -164,7 +167,11 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                             b.into_iter().map(|((pf, args), p)| {
                                 let binding = match pf {
                                     ParticleFamily::Vi { var, chain_with } => {
-                                        (FiVar::Var(var), chain_with)
+                                        let var = match var {
+                                            Some(var) => FiVar::Var(var),
+                                            None => FiVar::None,
+                                        };
+                                        (var, chain_with)
                                     }
                                     ParticleFamily::Fi { var, chain_with } => (var, chain_with),
                                     _ => unreachable!(),
@@ -175,12 +182,14 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                                             chaining,
                                             root,
                                             sharers,
+                                            and,
                                             ..
                                         } => PredicateTree::Binding {
                                             exposure: Exposure::Explicit(args),
                                             chaining,
                                             root,
                                             sharers,
+                                            and,
                                         },
                                         _ => unreachable!(),
                                     }
@@ -193,14 +202,18 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                     let mut v = 0;
                     for ((var, chain_with), p) in children {
                         v = match var {
-                            FiVar::Var(v) => v,
-                            FiVar::Same => v,
+                            FiVar::Same | FiVar::None => v,
                             FiVar::Next => v + 1,
+                            FiVar::Var(v) => v,
                         };
-                        while sharers.len() <= v as usize {
-                            sharers.push(BTreeSet::new());
+                        if let FiVar::None = var {
+                            and.insert(p);
+                        } else {
+                            while sharers.len() <= v as usize {
+                                sharers.push(BTreeSet::new());
+                            }
+                            sharers[v as usize].insert((chain_with, p));
                         }
-                        sharers[v as usize].insert((chain_with, p));
                     }
 
                     PredicateTree::Binding {
@@ -208,6 +221,7 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                         root,
                         exposure,
                         sharers,
+                        and,
                     }
                 }
             });

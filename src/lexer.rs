@@ -143,7 +143,7 @@ pub enum PredicateFamily {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ParticleFamily {
     Vi {
-        var: GrammarVar,
+        var: Option<GrammarVar>,
         chain_with: PredicateChaining,
     },
     Fi {
@@ -164,6 +164,7 @@ pub enum ParticleFamily {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FiVar {
+    None,
     Var(GrammarVar),
     Same,
     Next,
@@ -344,21 +345,32 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
         ))),
     );
 
-    let vi = pause
-        .ignore_then(just('v').then(just('i').or_not().then(arg_vowel)))
-        .map(|(v, (i, (var_v, var)))| {
-            (
-                iter::once(v).chain(i).chain(iter::once(var_v)).collect(),
-                ParticleFamily::Vi {
-                    var,
-                    chain_with: if i.is_some() {
-                        PredicateChaining::Equivalence
-                    } else {
-                        PredicateChaining::Sharing
+    let vi = pause.ignore_then(choice((
+        just('v')
+            .then(just('i').or_not().then(arg_vowel))
+            .map(|(v, (i, (var_v, var_i)))| {
+                (
+                    iter::once(v).chain(i).chain(iter::once(var_v)).collect(),
+                    ParticleFamily::Vi {
+                        var: Some(var_i),
+                        chain_with: if i.is_some() {
+                            PredicateChaining::Equivalence
+                        } else {
+                            PredicateChaining::Sharing
+                        },
                     },
+                )
+            }),
+        just("vi").map(|w| {
+            (
+                w.to_string(),
+                ParticleFamily::Vi {
+                    var: None,
+                    chain_with: PredicateChaining::Sharing,
                 },
             )
-        });
+        }),
+    )));
     let fi = pause.ignore_then(choice((
         just("feu").map(|w| {
             (
@@ -411,6 +423,15 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     },
                 )
             }),
+        just("fi").map(|w| {
+            (
+                w.to_string(),
+                ParticleFamily::Fi {
+                    var: FiVar::None,
+                    chain_with: PredicateChaining::Sharing,
+                },
+            )
+        }),
     )));
     let vei = pause
         .ignore_then(just("vei"))
