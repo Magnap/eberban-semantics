@@ -8,6 +8,7 @@ pub type Var = usize;
 pub enum Predicate {
     Leaf {
         word: String,
+        id: usize,
         apply_to: BTreeMap<GrammarVar, Var>,
     },
     And {
@@ -30,6 +31,8 @@ pub enum Predicate {
 pub fn to_expr(tree: PredicateTree) -> (Predicate, Vec<Var>) {
     let mut preds = Vec::new();
     let mut max_var = 0;
+    let mut max_id = 0;
+    let mut symbol_table = BTreeMap::new();
     let mut new_vars = Vec::new();
     to_expr_(
         tree,
@@ -37,6 +40,8 @@ pub fn to_expr(tree: PredicateTree) -> (Predicate, Vec<Var>) {
         BTreeMap::new(),
         &mut new_vars,
         &mut max_var,
+        &mut max_id,
+        &mut symbol_table,
         &mut preds,
     );
     (
@@ -55,11 +60,22 @@ fn to_expr_(
     mut vars: BTreeMap<GrammarVar, Var>,
     orig_new_vars: &mut Vec<Var>,
     max_var: &mut Var,
+    max_id: &mut usize,
+    symbol_table: &mut BTreeMap<String, Vec<usize>>,
     orig_preds: &mut Vec<Predicate>,
 ) {
     match tree {
         PredicateTree::Leaf(word) => orig_preds.push(Predicate::Leaf {
-            word: word.word,
+            word: word.word.clone(),
+            id: *symbol_table
+                .entry(word.word)
+                .or_insert_with(|| {
+                    let i = *max_id;
+                    *max_id += 1;
+                    vec![i]
+                })
+                .last()
+                .unwrap(),
             apply_to: vars,
         }),
         PredicateTree::Binding {
@@ -104,7 +120,6 @@ fn to_expr_(
                 vars.clear();
                 vars.insert(chain_place, chain_var);
             }
-            // TODO make KI/GI scoped
             if let Exposure::Explicit(vec) = &exposure {
                 for (i, explicit) in vec.iter().enumerate() {
                     let var = vars.remove(&(i as u8)).unwrap_or_else(|| {
@@ -113,10 +128,17 @@ fn to_expr_(
                         *max_var += 1;
                         v
                     });
+                    let id = *max_id;
+                    *max_id += 1;
+                    symbol_table
+                        .entry(explicit.word.clone())
+                        .or_default()
+                        .push(id);
                     match &explicit.class {
                         crate::lexer::WordClass::Particle(crate::lexer::ParticleFamily::Ki) => {
                             orig_preds.push(Predicate::Leaf {
                                 word: explicit.word.clone(),
+                                id,
                                 apply_to: BTreeMap::from([(0, var)]),
                             })
                         }
@@ -125,6 +147,7 @@ fn to_expr_(
                                 var,
                                 pred: Box::new(Predicate::Leaf {
                                     word: explicit.word.clone(),
+                                    id,
                                     apply_to: BTreeMap::new(),
                                 }),
                             })
@@ -169,6 +192,8 @@ fn to_expr_(
                             [(0, var)].into_iter().collect(),
                             new_vars,
                             max_var,
+                            max_id,
+                            symbol_table,
                             preds,
                         ),
                         PredicateChaining::Equivalence => {
@@ -181,6 +206,8 @@ fn to_expr_(
                                     BTreeMap::new(),
                                     new_vars,
                                     max_var,
+                                    max_id,
+                                    symbol_table,
                                     &mut equiv_preds,
                                 );
                                 let p = if equiv_preds.len() == 1 {
@@ -200,6 +227,8 @@ fn to_expr_(
                                     BTreeMap::new(),
                                     &mut new_vars,
                                     max_var,
+                                    max_id,
+                                    symbol_table,
                                     &mut equiv_preds,
                                 );
                                 let p = if equiv_preds.len() == 1 {
@@ -230,8 +259,16 @@ fn to_expr_(
                 vars,
                 new_vars,
                 max_var,
+                max_id,
+                symbol_table,
                 preds,
             );
+
+            if let Exposure::Explicit(vec) = &exposure {
+                for explicit in vec.iter() {
+                    symbol_table.get_mut(&explicit.word).unwrap().pop();
+                }
+            }
 
             if closure_needed {
                 let p = if new_preds.len() == 1 {
@@ -254,6 +291,8 @@ fn to_expr_(
                     BTreeMap::new(),
                     &mut new_vars,
                     max_var,
+                    max_id,
+                    symbol_table,
                     &mut preds,
                 );
 

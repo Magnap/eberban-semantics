@@ -41,6 +41,7 @@ fn main() -> Res<()> {
         "blarin seo kce soai kolon cila",
         "mi dona va ke be mian bure ke",
         "mai vie vlu fie ge ga be vle via mai vi ge fi ga vei fie mai vi ge fi go",
+        "mi ve ke be ke duna vo ke be ke mi vei bure ke",
     ];
 
     let lexer = lexer::<Simple<_>>();
