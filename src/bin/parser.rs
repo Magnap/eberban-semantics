@@ -53,7 +53,7 @@ fn main() -> Res<()> {
     ];
 
     let lexer = lexer::<Cheap<_>>();
-    let parser = parser::<Simple<_>>();
+    let parser = parser::<Cheap<_>>();
     for s in example_sentences {
         println!("{s}");
         let start = Instant::now();
