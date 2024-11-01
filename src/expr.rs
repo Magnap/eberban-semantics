@@ -27,6 +27,85 @@ pub enum Predicate {
         pred: Box<Predicate>,
     },
 }
+impl std::fmt::Display for Predicate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Predicate::Leaf { word, id, apply_to } => {
+                write!(f, "{word}{id}")?;
+                if apply_to.is_empty() {
+                    Ok(())
+                } else {
+                    write!(f, "(")?;
+                    let mut first = true;
+                    for i in 0..apply_to.last_key_value().map(|(k, _)| k + 1).unwrap_or(0) {
+                        if let Some(v) = apply_to.get(&i) {
+                            if first {
+                                write!(f, "{v}")?;
+                            } else {
+                                write!(f, ", {v}")?;
+                            }
+                        } else if first {
+                            write!(f, "_")?;
+                        } else {
+                            write!(f, ", _")?;
+                        }
+                        first = false;
+                    }
+                    write!(f, ")")
+                }
+            }
+            Predicate::And { preds } => {
+                let mut first = true;
+                for p in preds {
+                    if first {
+                        write!(f, "{p}")?;
+                    } else {
+                        write!(f, " ∧ {p}")?;
+                    }
+                    first = false;
+                }
+                Ok(())
+            }
+            Predicate::Exists { vars, pred } => {
+                if vars.is_empty() {
+                    write!(f, "{pred}")
+                } else {
+                    write!(f, "(∃ ")?;
+                    let mut first = true;
+                    for v in vars {
+                        if first {
+                            write!(f, "{v}")?;
+                        } else {
+                            write!(f, ",{v}")?;
+                        }
+                        first = false;
+                    }
+                    write!(f, ". ")?;
+                    write!(f, "{pred})")
+                }
+            }
+            Predicate::Equivalent { var, pred } => write!(f, "({var} = {pred})"),
+            Predicate::Lambda { vars, pred } => {
+                if vars.is_empty() {
+                    write!(f, "{pred}")
+                } else {
+                    write!(f, "(λ ")?;
+                    let mut first = true;
+                    for v in vars {
+                        if first {
+                            write!(f, "{v}")?;
+                        } else {
+                            write!(f, ",{v}")?;
+                        }
+                        first = false;
+                    }
+                    write!(f, ". ")?;
+                    write!(f, "{pred})")
+                }
+            }
+        }
+    }
+}
 
 pub fn to_expr(tree: PredicateTree) -> (Predicate, Vec<Var>) {
     let mut preds = Vec::new();

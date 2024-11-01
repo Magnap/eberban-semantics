@@ -6,7 +6,11 @@ use chumsky::{
     error::{Cheap, Simple},
     Parser,
 };
-use eberban::{expr::to_expr, lexer::lexer, parser::parser};
+use eberban::{
+    expr::{to_expr, Predicate},
+    lexer::lexer,
+    parser::parser,
+};
 
 fn main() -> Res<()> {
     let example_sentences = [
@@ -55,9 +59,13 @@ fn main() -> Res<()> {
         let s = lexer.parse(s).unwrap();
         let lexing = start.elapsed();
         if let Ok(tree) = parser.parse(s) {
-            let expr = to_expr(tree);
+            let (expr, vars) = to_expr(tree);
             let parsing = start.elapsed();
-            println!("{expr:?}");
+            let expr = Predicate::Lambda {
+                vars,
+                pred: Box::new(expr),
+            };
+            println!("{expr}");
             println!(
                 "lexed in {} µs, parsed in {} µs",
                 lexing.as_micros(),
