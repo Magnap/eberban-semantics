@@ -121,7 +121,7 @@ fn to_expr_(
                 vars.insert(chain_place, chain_var);
             }
             if let Exposure::Explicit(vec) = &exposure {
-                for (i, explicit) in vec.iter().enumerate() {
+                for (i, (word, chain_with)) in vec.iter().enumerate() {
                     let var = vars.remove(&(i as u8)).unwrap_or_else(|| {
                         let v = *max_var;
                         orig_new_vars.push(v);
@@ -130,29 +130,21 @@ fn to_expr_(
                     });
                     let id = *max_id;
                     *max_id += 1;
-                    symbol_table
-                        .entry(explicit.word.clone())
-                        .or_default()
-                        .push(id);
-                    match &explicit.class {
-                        crate::lexer::WordClass::Particle(crate::lexer::ParticleFamily::Ki) => {
-                            orig_preds.push(Predicate::Leaf {
-                                word: explicit.word.clone(),
+                    symbol_table.entry(word.clone()).or_default().push(id);
+                    match chain_with {
+                        PredicateChaining::Sharing => orig_preds.push(Predicate::Leaf {
+                            word: word.clone(),
+                            id,
+                            apply_to: BTreeMap::from([(0, var)]),
+                        }),
+                        PredicateChaining::Equivalence => orig_preds.push(Predicate::Equivalent {
+                            var,
+                            pred: Box::new(Predicate::Leaf {
+                                word: word.clone(),
                                 id,
-                                apply_to: BTreeMap::from([(0, var)]),
-                            })
-                        }
-                        crate::lexer::WordClass::Particle(crate::lexer::ParticleFamily::Gi(_)) => {
-                            orig_preds.push(Predicate::Equivalent {
-                                var,
-                                pred: Box::new(Predicate::Leaf {
-                                    word: explicit.word.clone(),
-                                    id,
-                                    apply_to: BTreeMap::new(),
-                                }),
-                            })
-                        }
-                        _ => unreachable!(),
+                                apply_to: BTreeMap::new(),
+                            }),
+                        }),
                     }
                 }
                 vars.clear();
@@ -265,8 +257,8 @@ fn to_expr_(
             );
 
             if let Exposure::Explicit(vec) = &exposure {
-                for explicit in vec.iter() {
-                    symbol_table.get_mut(&explicit.word).unwrap().pop();
+                for (word, _) in vec.iter() {
+                    symbol_table.get_mut(word).unwrap().pop();
                 }
             }
 

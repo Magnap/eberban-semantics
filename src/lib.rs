@@ -1,5 +1,3 @@
-use lexer::Word;
-
 pub mod expr;
 pub mod lexer;
 pub mod parser;
@@ -23,5 +21,5 @@ pub enum Exposure {
     Standard,
     Transparent,
     Modified(Vec<GrammarVar>),
-    Explicit(Vec<Word>),
+    Explicit(Vec<(String, PredicateChaining)>),
 }

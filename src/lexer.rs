@@ -122,15 +122,15 @@ pub const MEDIAL_PAIRS: [(char, char); 36] = [
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Word {
-    pub word: String,
-    pub class: WordClass,
+pub enum Word {
+    Particle(ParticleFamily),
+    Predicate(PredicateWord, PredicateFamily),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum WordClass {
-    Particle(ParticleFamily),
-    Predicate(PredicateFamily, ChainingBehavior),
+pub struct PredicateWord {
+    pub word: String,
+    pub chaining: ChainingBehavior,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -153,15 +153,15 @@ pub enum ParticleFamily {
         chain_with: PredicateChaining,
     },
     Vei,
-    Ki,
-    Gi(ChainingBehavior),
+    Ki(String),
+    Gi(PredicateWord),
     Be,
-    Mi(ChainingBehavior),
+    Mi(PredicateWord),
     Si {
         exposure: Exposure,
         chaining: ChainingBehavior,
     },
-    Other,
+    Other(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -209,28 +209,30 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     .map(|(vowel, vhowels)| vowel.into_iter().chain(vhowels.into_iter().flatten())),
             )
             .map(|(c, vh)| {
-                let w: String = iter::once(c).chain(vh).collect();
-                let f = match c {
-                    'k' => ParticleFamily::Ki,
-                    'g' => ParticleFamily::Gi(if c == 'i' {
-                        ChainingBehavior {
-                            var: 0,
-                            chain_with: PredicateChaining::Sharing,
-                        }
-                    } else if w.ends_with('i') {
-                        ChainingBehavior {
-                            var: 1,
-                            chain_with: PredicateChaining::Equivalence,
-                        }
-                    } else {
-                        ChainingBehavior {
-                            var: 1,
-                            chain_with: PredicateChaining::Sharing,
-                        }
+                let word: String = iter::once(c).chain(vh).collect();
+                match c {
+                    'k' => ParticleFamily::Ki(word),
+                    'g' => ParticleFamily::Gi(PredicateWord {
+                        chaining: if c == 'i' {
+                            ChainingBehavior {
+                                var: 0,
+                                chain_with: PredicateChaining::Sharing,
+                            }
+                        } else if word.ends_with('i') {
+                            ChainingBehavior {
+                                var: 1,
+                                chain_with: PredicateChaining::Equivalence,
+                            }
+                        } else {
+                            ChainingBehavior {
+                                var: 1,
+                                chain_with: PredicateChaining::Sharing,
+                            }
+                        },
+                        word,
                     }),
-                    _ => ParticleFamily::Other,
-                };
-                (w, f)
+                    _ => ParticleFamily::Other(word),
+                }
             }),
     );
     let sonorant_or_vowel_particle = pause.at_least(1).ignore_then(
@@ -246,13 +248,12 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
         )
         .then(sonorant.or_not())
         .map(|(((a, b), c), d)| {
-            (
+            ParticleFamily::Other(
                 a.into_iter()
                     .chain(iter::once(b))
                     .chain(c.into_iter().flatten())
                     .chain(d)
                     .collect(),
-                ParticleFamily::Other,
             )
         }),
     );
@@ -265,9 +266,9 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
             .map(just),
         ))
         .map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Mi(if w == "mua" {
+            ParticleFamily::Mi(PredicateWord {
+                word: w.to_string(),
+                chaining: if w == "mua" {
                     ChainingBehavior {
                         var: 1,
                         chain_with: PredicateChaining::Equivalence,
@@ -277,36 +278,28 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                         var: 0,
                         chain_with: PredicateChaining::Sharing,
                     }
-                }),
-            )
+                },
+            })
         });
 
-    let arg_vowel = choice(['e', 'a', 'o', 'u'].map(just)).map(|v| {
-        (
-            v,
-            match v {
-                'e' => 0,
-                'a' => 1,
-                'o' => 2,
-                'u' => 3,
-                _ => unreachable!(),
-            },
-        )
+    let arg_vowel = choice(['e', 'a', 'o', 'u'].map(just)).map(|v| match v {
+        'e' => 0,
+        'a' => 1,
+        'o' => 2,
+        'u' => 3,
+        _ => unreachable!(),
     });
     let si = pause.ignore_then(
         just('s').ignore_then(choice((
-            just('i').ignore_then(arg_vowel).map(|(v, i)| {
-                (
-                    ['s', 'i', v].into_iter().collect(),
-                    ParticleFamily::Si {
-                        exposure: Exposure::Transparent,
-                        chaining: ChainingBehavior {
-                            var: i,
-                            chain_with: PredicateChaining::Equivalence,
-                        },
+            just('i')
+                .ignore_then(arg_vowel)
+                .map(|i| ParticleFamily::Si {
+                    exposure: Exposure::Transparent,
+                    chaining: ChainingBehavior {
+                        var: i,
+                        chain_with: PredicateChaining::Equivalence,
                     },
-                )
-            }),
+                }),
             choice((
                 just('i')
                     .to(Vec::new())
@@ -318,132 +311,77 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     .then(just('h').ignore_then(arg_vowel).or_not())
                     .then(just('i').or_not()),
             ))
-            .map(|((vs, b), i)| {
-                (
-                    iter::once('s')
-                        .chain(vs.iter().map(|(v, _)| *v).chain(b.map(|(v, _)| v)).chain(i))
-                        .collect(),
-                    ParticleFamily::Si {
-                        exposure: Exposure::Modified(vs.iter().map(|(_, i)| *i).collect()),
-                        chaining: ChainingBehavior {
-                            var: if let Some((_, i)) = b {
-                                i
-                            } else {
-                                vs.last().unwrap().1
-                            },
-                            chain_with: if i.is_some() {
-                                PredicateChaining::Equivalence
-                            } else {
-                                PredicateChaining::Sharing
-                            },
-                        },
+            .map(|((vs, b), i)| ParticleFamily::Si {
+                chaining: ChainingBehavior {
+                    var: if let Some(i) = b {
+                        i
+                    } else {
+                        *vs.last().unwrap()
                     },
-                )
+                    chain_with: if i.is_some() {
+                        PredicateChaining::Equivalence
+                    } else {
+                        PredicateChaining::Sharing
+                    },
+                },
+                exposure: Exposure::Modified(vs),
             }),
         ))),
     );
 
     let vi = pause.ignore_then(choice((
         just('v')
-            .then(just('i').or_not().then(arg_vowel))
-            .map(|(v, (i, (var_v, var_i)))| {
-                (
-                    iter::once(v).chain(i).chain(iter::once(var_v)).collect(),
-                    ParticleFamily::Vi {
-                        var: Some(var_i),
-                        chain_with: if i.is_some() {
-                            PredicateChaining::Equivalence
-                        } else {
-                            PredicateChaining::Sharing
-                        },
-                    },
-                )
-            }),
-        just("vi").map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Vi {
-                    var: None,
-                    chain_with: PredicateChaining::Sharing,
+            .ignore_then(just('i').ignored().or_not().then(arg_vowel))
+            .map(|(i, var_i)| ParticleFamily::Vi {
+                var: Some(var_i),
+                chain_with: if i.is_some() {
+                    PredicateChaining::Equivalence
+                } else {
+                    PredicateChaining::Sharing
                 },
-            )
+            }),
+        just("vi").to(ParticleFamily::Vi {
+            var: None,
+            chain_with: PredicateChaining::Sharing,
         }),
     )));
     let fi = pause.ignore_then(choice((
-        just("feu").map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Fi {
-                    var: FiVar::Same,
-                    chain_with: PredicateChaining::Sharing,
-                },
-            )
+        just("feu").to(ParticleFamily::Fi {
+            var: FiVar::Same,
+            chain_with: PredicateChaining::Sharing,
         }),
-        just("fau").map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Fi {
-                    var: FiVar::Next,
-                    chain_with: PredicateChaining::Sharing,
-                },
-            )
+        just("fau").to(ParticleFamily::Fi {
+            var: FiVar::Next,
+            chain_with: PredicateChaining::Sharing,
         }),
-        just("fei").map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Fi {
-                    var: FiVar::Same,
-                    chain_with: PredicateChaining::Equivalence,
-                },
-            )
+        just("fei").to(ParticleFamily::Fi {
+            var: FiVar::Same,
+            chain_with: PredicateChaining::Equivalence,
         }),
-        just("fai").map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Fi {
-                    var: FiVar::Next,
-                    chain_with: PredicateChaining::Equivalence,
-                },
-            )
+        just("fai").to(ParticleFamily::Fi {
+            var: FiVar::Next,
+            chain_with: PredicateChaining::Equivalence,
         }),
         just('f')
-            .then(just('i').or_not().then(arg_vowel))
-            .map(|(v, (i, (var_v, var_i)))| {
-                (
-                    iter::once(v).chain(i).chain(iter::once(var_v)).collect(),
-                    ParticleFamily::Fi {
-                        var: FiVar::Var(var_i),
-                        chain_with: if i.is_some() {
-                            PredicateChaining::Equivalence
-                        } else {
-                            PredicateChaining::Sharing
-                        },
-                    },
-                )
-            }),
-        just("fi").map(|w| {
-            (
-                w.to_string(),
-                ParticleFamily::Fi {
-                    var: FiVar::None,
-                    chain_with: PredicateChaining::Sharing,
+            .ignore_then(just('i').ignored().or_not().then(arg_vowel))
+            .map(|(i, var_i)| ParticleFamily::Fi {
+                var: FiVar::Var(var_i),
+                chain_with: if i.is_some() {
+                    PredicateChaining::Equivalence
+                } else {
+                    PredicateChaining::Sharing
                 },
-            )
+            }),
+        just("fi").to(ParticleFamily::Fi {
+            var: FiVar::None,
+            chain_with: PredicateChaining::Sharing,
         }),
     )));
-    let vei = pause
-        .ignore_then(just("vei"))
-        .map(|w| (w.to_string(), ParticleFamily::Vei));
-    let be = pause
-        .ignore_then(just("be"))
-        .map(|w| (w.to_string(), ParticleFamily::Be));
+    let vei = pause.then(just("vei")).to(ParticleFamily::Vei);
+    let be = pause.then(just("be")).to(ParticleFamily::Be);
 
-    let pe = pause
-        .ignore_then(just("pe"))
-        .map(|w| (w.to_string(), ParticleFamily::Pe));
-    let pei = pause
-        .ignore_then(just("pei"))
-        .map(|w| (w.to_string(), ParticleFamily::Pei));
+    let pe = pause.then(just("pe")).to(ParticleFamily::Pe);
+    let pei = pause.then(just("pei")).to(ParticleFamily::Pei);
 
     let specific_particle = choice((pei, pe, be, vei, vi, fi, mi, si));
 
@@ -452,10 +390,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
         nonsonorant_particle,
         sonorant_or_vowel_particle,
     ))
-    .map(|(w, f)| Word {
-        word: w,
-        class: WordClass::Particle(f),
-    });
+    .map(Word::Particle);
 
     let root_mix = choice((
         medial_pair.map(|(a, b)| (a, Some(b))),
@@ -538,10 +473,8 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
     let root = pause.ignore_then(
         choice((nonsonorant_root, initial_pair_root)).map(|(w, c)| (w, c, PredicateFamily::Root)),
     );
-    let predicate = choice([root]).map(|(w, c, f)| Word {
-        word: w,
-        class: WordClass::Predicate(f, c),
-    });
+    let predicate = choice([root])
+        .map(|(word, chaining, family)| Word::Predicate(PredicateWord { word, chaining }, family));
 
     let word = choice((predicate, particle));
 
