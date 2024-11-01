@@ -9,7 +9,7 @@ pub enum Predicate {
     Leaf {
         word: String,
         id: usize,
-        apply_to: BTreeMap<GrammarVar, Var>,
+        apply_to: Vec<Var>,
     },
     And {
         preds: Vec<Predicate>,
@@ -37,17 +37,11 @@ impl std::fmt::Display for Predicate {
                 } else {
                     write!(f, "(")?;
                     let mut first = true;
-                    for i in 0..apply_to.last_key_value().map(|(k, _)| k + 1).unwrap_or(0) {
-                        if let Some(v) = apply_to.get(&i) {
-                            if first {
-                                write!(f, "{v}")?;
-                            } else {
-                                write!(f, ", {v}")?;
-                            }
-                        } else if first {
-                            write!(f, "_")?;
+                    for v in apply_to {
+                        if first {
+                            write!(f, "{v}")?;
                         } else {
-                            write!(f, ", _")?;
+                            write!(f, ", {v}")?;
                         }
                         first = false;
                     }
@@ -155,7 +149,7 @@ fn to_expr_(
                 })
                 .last()
                 .unwrap(),
-            apply_to: vars,
+            apply_to: vars.values().copied().collect(),
         }),
         PredicateTree::Binding {
             chaining: _,
@@ -214,14 +208,14 @@ fn to_expr_(
                         PredicateChaining::Sharing => orig_preds.push(Predicate::Leaf {
                             word: word.clone(),
                             id,
-                            apply_to: BTreeMap::from([(0, var)]),
+                            apply_to: vec![var],
                         }),
                         PredicateChaining::Equivalence => orig_preds.push(Predicate::Equivalent {
                             var,
                             pred: Box::new(Predicate::Leaf {
                                 word: word.clone(),
                                 id,
-                                apply_to: BTreeMap::new(),
+                                apply_to: Vec::new(),
                             }),
                         }),
                     }
@@ -243,17 +237,12 @@ fn to_expr_(
 
             for (i, set) in sharers.into_iter().enumerate().rev() {
                 let i = i as GrammarVar;
-                let var = if !set.is_empty() {
-                    *vars.entry(i).or_insert_with(|| {
-                        let v = *max_var;
-                        new_vars.push(v);
-                        *max_var += 1;
-                        v
-                    })
-                } else {
-                    // irrelevant
-                    0
-                };
+                let var = *vars.entry(i).or_insert_with(|| {
+                    let v = *max_var;
+                    new_vars.push(v);
+                    *max_var += 1;
+                    v
+                });
 
                 for (chaining, pred_tree) in set {
                     match chaining {
