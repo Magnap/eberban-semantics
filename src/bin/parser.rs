@@ -2,7 +2,10 @@ type Res<T> = Result<T, Box<dyn std::error::Error>>;
 
 use std::time::Instant;
 
-use chumsky::{error::Simple, Parser};
+use chumsky::{
+    error::{Cheap, Simple},
+    Parser,
+};
 use eberban::{expr::to_expr, lexer::lexer, parser::parser};
 
 fn main() -> Res<()> {
@@ -44,7 +47,7 @@ fn main() -> Res<()> {
         "mi ve ke be ke duna vo ke be ke mi vei bure ke",
     ];
 
-    let lexer = lexer::<Simple<_>>();
+    let lexer = lexer::<Cheap<_>>();
     let parser = parser::<Simple<_>>();
     for s in example_sentences {
         println!("{s}");
@@ -54,7 +57,7 @@ fn main() -> Res<()> {
         if let Ok(tree) = parser.parse(s) {
             let expr = to_expr(tree);
             let parsing = start.elapsed();
-            dbg!(expr);
+            println!("{expr:?}");
             println!(
                 "lexed in {} µs, parsed in {} µs",
                 lexing.as_micros(),
