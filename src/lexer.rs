@@ -142,6 +142,8 @@ pub enum PredicateFamily {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ParticleFamily {
+    Pe,
+    Pei,
     Vi {
         var: Option<GrammarVar>,
         chain_with: PredicateChaining,
@@ -201,17 +203,13 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     .then(
                         just('h')
                             .then(vowel.repeated().at_least(1))
-                            .map(|(h, vowels)| iter::once(h).chain(vowels).collect::<Vec<_>>())
+                            .map(|(h, vowels)| iter::once(h).chain(vowels))
                             .repeated(),
                     )
-                    .map(|(vowel, vhowels)| {
-                        vowel
-                            .into_iter()
-                            .chain(vhowels.into_iter().flatten())
-                            .collect::<String>()
-                    }),
+                    .map(|(vowel, vhowels)| vowel.into_iter().chain(vhowels.into_iter().flatten())),
             )
             .map(|(c, vh)| {
+                let w: String = iter::once(c).chain(vh).collect();
                 let f = match c {
                     'k' => ParticleFamily::Ki,
                     'g' => ParticleFamily::Gi(if c == 'i' {
@@ -219,7 +217,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                             var: 0,
                             chain_with: PredicateChaining::Sharing,
                         }
-                    } else if vh.ends_with('i') {
+                    } else if w.ends_with('i') {
                         ChainingBehavior {
                             var: 1,
                             chain_with: PredicateChaining::Equivalence,
@@ -232,7 +230,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     }),
                     _ => ParticleFamily::Other,
                 };
-                (iter::once(c).chain(vh.chars()).collect(), f)
+                (w, f)
             }),
     );
     let sonorant_or_vowel_particle = pause.at_least(1).ignore_then(
@@ -243,7 +241,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
         .then(
             choice((just('h'), sonorant))
                 .then(vowel.repeated().at_least(1))
-                .map(|(h, vowels)| iter::once(h).chain(vowels).collect::<Vec<_>>())
+                .map(|(h, vowels)| iter::once(h).chain(vowels))
                 .repeated(),
         )
         .then(sonorant.or_not())
@@ -440,13 +438,17 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
         .ignore_then(just("be"))
         .map(|w| (w.to_string(), ParticleFamily::Be));
 
+    let pe = pause
+        .ignore_then(just("pe"))
+        .map(|w| (w.to_string(), ParticleFamily::Pe));
+    let pei = pause
+        .ignore_then(just("pei"))
+        .map(|w| (w.to_string(), ParticleFamily::Pei));
+
+    let specific_particle = choice((pei, pe, be, vei, vi, fi, mi, si));
+
     let particle = choice((
-        be,
-        vei,
-        vi,
-        fi,
-        mi,
-        si,
+        specific_particle,
         nonsonorant_particle,
         sonorant_or_vowel_particle,
     ))

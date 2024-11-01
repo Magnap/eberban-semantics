@@ -66,15 +66,8 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
     let predicate_tree = recursive(|predicate_tree| {
         let leaf = predicate.map(PredicateTree::Leaf);
         let pe_pei = predicate_tree.clone().delimited_by(
-            just(Word {
-                word: "pe".to_string(),
-                class: WordClass::Particle(ParticleFamily::Other),
-            }),
-            just(Word {
-                word: "pei".to_string(),
-                class: WordClass::Particle(ParticleFamily::Other),
-            })
-            .or_not(),
+            filter(|w: &Word| matches!(w.class, WordClass::Particle(ParticleFamily::Pe))),
+            filter(|w: &Word| matches!(w.class, WordClass::Particle(ParticleFamily::Pei))).or_not(),
         );
 
         let si =
