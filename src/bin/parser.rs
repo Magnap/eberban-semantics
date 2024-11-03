@@ -5,7 +5,7 @@ use std::time::Instant;
 use chumsky::{error::Cheap, Parser};
 use eberban::{
     expr::{to_expr, Predicate},
-    lexer::lexer,
+    lexer::{lexer, preprocess},
     parser::parser,
 };
 
@@ -62,7 +62,7 @@ fn main() -> Res<()> {
     for s in example_sentences {
         println!("{s}");
         let start = Instant::now();
-        let s = lexer.parse(s).unwrap();
+        let s = lexer.parse(preprocess(s)).unwrap();
         let lexing = start.elapsed();
         if let Ok(tree) = parser.parse(s) {
             let (expr, vars) = to_expr(tree);

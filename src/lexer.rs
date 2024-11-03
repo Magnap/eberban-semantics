@@ -1,10 +1,11 @@
-use std::{collections::HashMap, iter};
+use std::{iter, ops::Range};
 
 use crate::{ChainingBehavior, Exposure, GrammarVar, PredicateChaining};
 use chumsky::{
     prelude::{choice, end, filter, just},
-    Error, Parser,
+    Error, Parser, Stream,
 };
+use itertools::Itertools;
 
 pub const VOWELS: [char; 5] = ['i', 'e', 'a', 'o', 'u'];
 pub const NON_SONORANT: [char; 13] = [
@@ -121,6 +122,9 @@ pub const MEDIAL_PAIRS: [(char, char); 36] = [
     ('l', 'n'),
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PreProcessed(char);
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Word {
     Particle(ParticleFamily),
@@ -174,27 +178,35 @@ pub enum FiVar {
     Next,
 }
 
-pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
-    let letter: HashMap<_, _> = "hnrlmpbfvtdszcjkgieaou"
-        .chars()
-        .map(|c| {
-            (
-                c,
-                choice((just::<_, _, E>(c), just::<_, _, E>(c.to_ascii_uppercase())))
-                    .repeated()
-                    .at_least(1)
-                    .map(move |_| c),
-            )
-        })
-        .collect();
-    let pause = filter::<_, _, E>(|c: &char| c.is_whitespace() || *c == '\'').repeated();
+pub fn preprocess(
+    s: &str,
+) -> Stream<PreProcessed, Range<usize>, impl Iterator<Item = (PreProcessed, Range<usize>)> + '_> {
+    let len = s.chars().count();
+    Stream::from_iter(
+        len..len,
+        s.chars()
+            .map(|c| c.to_ascii_lowercase())
+            .dedup_with_count()
+            .scan(0, |i, (n, c)| {
+                let start = *i;
+                *i += n;
+                let end = *i;
+                Some((c, start..end))
+            })
+            .map(|(c, r)| (PreProcessed(c), r)),
+    )
+}
 
-    let vowel = choice::<_, E>(VOWELS.map(|c| letter[&c]));
-    let non_sonorant = choice::<_, E>(NON_SONORANT.map(|c| letter[&c]));
-    let sonorant = choice::<_, E>(SONORANT.map(|c| letter[&c]));
+pub fn lexer<E: Error<PreProcessed>>() -> impl Parser<PreProcessed, Vec<Word>, Error = E> {
+    let pause = filter::<_, _, E>(|PreProcessed(ref c)| c.is_whitespace() || *c == '\'').repeated();
+    let letter = |c: char| just(PreProcessed(c));
 
-    let initial_pair = choice::<_, E>(INITIAL_PAIRS.map(|(a, b)| just(a).then(just::<_, _, E>(b))));
-    let medial_pair = choice::<_, E>(MEDIAL_PAIRS.map(|(a, b)| just(a).then(just::<_, _, E>(b))));
+    let vowel = choice::<_, E>(VOWELS.map(letter));
+    let non_sonorant = choice::<_, E>(NON_SONORANT.map(letter));
+    let sonorant = choice::<_, E>(SONORANT.map(letter));
+
+    let initial_pair = choice::<_, E>(INITIAL_PAIRS.map(|(a, b)| letter(a).then(letter(b))));
+    let medial_pair = choice::<_, E>(MEDIAL_PAIRS.map(|(a, b)| letter(a).then(letter(b))));
 
     let nonsonorant_particle = pause.ignore_then(
         non_sonorant
@@ -203,7 +215,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     .repeated()
                     .at_least(1)
                     .then(
-                        just('h')
+                        letter('h')
                             .then(vowel.repeated().at_least(1))
                             .map(|(h, vowels)| iter::once(h).chain(vowels))
                             .repeated(),
@@ -211,8 +223,8 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     .map(|(vowel, vhowels)| vowel.into_iter().chain(vhowels.into_iter().flatten())),
             )
             .map(|(c, vh)| {
-                let word: String = iter::once(c).chain(vh).collect();
-                match c {
+                let word: String = iter::once(c).chain(vh).map(|PreProcessed(c)| c).collect();
+                match c.0 {
                     'k' => ParticleFamily::Ki(word),
                     'g' => ParticleFamily::Gi(PredicateWord {
                         chaining: if word.starts_with("gi") {
@@ -240,10 +252,10 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
     let sonorant_or_vowel_particle = pause.at_least(1).ignore_then(
         choice::<_, E>((
             sonorant.map(Some).then(vowel),
-            vowel.map(|v| (None::<char>, v)),
+            vowel.map(|v| (None::<PreProcessed>, v)),
         ))
         .then(
-            choice((just('h'), sonorant))
+            choice((letter('h'), sonorant))
                 .then(vowel.repeated().at_least(1))
                 .map(|(h, vowels)| iter::once(h).chain(vowels))
                 .repeated(),
@@ -255,6 +267,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     .chain(iter::once(b))
                     .chain(c.into_iter().flatten())
                     .chain(d)
+                    .map(|PreProcessed(c)| c)
                     .collect(),
             )
         }),
@@ -265,12 +278,12 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
             [
                 "mai", "mao", "mui", "mue", "mua", "mio", "mie", "moe", "ma", "mi", "mo", "me",
             ]
-            .map(just),
+            .map(|s| just(s.chars().map(PreProcessed).collect::<Vec<_>>())),
         ))
         .map(|w| {
+            let word = w.into_iter().map(|PreProcessed(c)| c).collect();
             ParticleFamily::Mi(PredicateWord {
-                word: w.to_string(),
-                chaining: if w == "mua" {
+                chaining: if &word == "mua" {
                     ChainingBehavior {
                         var: 1,
                         chain_with: PredicateChaining::Equivalence,
@@ -281,10 +294,11 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                         chain_with: PredicateChaining::Sharing,
                     }
                 },
+                word,
             })
         });
 
-    let arg_vowel = choice(['e', 'a', 'o', 'u'].map(just)).map(|v| match v {
+    let arg_vowel = choice(['e', 'a', 'o', 'u'].map(letter)).map(|PreProcessed(v)| match v {
         'e' => 0,
         'a' => 1,
         'o' => 2,
@@ -292,8 +306,8 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
         _ => unreachable!(),
     });
     let si = pause.ignore_then(
-        just('s').ignore_then(choice((
-            just('i')
+        letter('s').ignore_then(choice((
+            letter('i')
                 .ignore_then(arg_vowel)
                 .map(|i| ParticleFamily::Si {
                     exposure: Exposure::Transparent,
@@ -303,15 +317,15 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     },
                 }),
             choice((
-                just('i')
+                letter('i')
                     .to(Vec::new())
-                    .then(just('h').ignore_then(arg_vowel).map(Some))
-                    .then(just('i').map(Some)),
+                    .then(letter('h').ignore_then(arg_vowel).map(Some))
+                    .then(letter('i').map(Some)),
                 arg_vowel
                     .repeated()
                     .at_least(1)
-                    .then(just('h').ignore_then(arg_vowel).or_not())
-                    .then(just('i').or_not()),
+                    .then(letter('h').ignore_then(arg_vowel).or_not())
+                    .then(letter('i').or_not()),
             ))
             .map(|((vs, b), i)| ParticleFamily::Si {
                 chaining: ChainingBehavior {
@@ -332,8 +346,8 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
     );
 
     let vi = pause.ignore_then(choice((
-        just('v')
-            .ignore_then(just('i').ignored().or_not().then(arg_vowel))
+        letter('v')
+            .ignore_then(letter('i').ignored().or_not().then(arg_vowel))
             .map(|(i, var_i)| ParticleFamily::Vi {
                 var: Some(var_i),
                 chain_with: if i.is_some() {
@@ -342,30 +356,30 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     PredicateChaining::Sharing
                 },
             }),
-        just("vi").to(ParticleFamily::Vi {
+        just(['v', 'i'].map(PreProcessed)).to(ParticleFamily::Vi {
             var: None,
             chain_with: PredicateChaining::Sharing,
         }),
     )));
     let fi = pause.ignore_then(choice((
-        just("feu").to(ParticleFamily::Fi {
+        just(['f', 'e', 'u'].map(PreProcessed)).to(ParticleFamily::Fi {
             var: FiVar::Same,
             chain_with: PredicateChaining::Sharing,
         }),
-        just("fau").to(ParticleFamily::Fi {
+        just(['f', 'a', 'u'].map(PreProcessed)).to(ParticleFamily::Fi {
             var: FiVar::Next,
             chain_with: PredicateChaining::Sharing,
         }),
-        just("fei").to(ParticleFamily::Fi {
+        just(['f', 'e', 'i'].map(PreProcessed)).to(ParticleFamily::Fi {
             var: FiVar::Same,
             chain_with: PredicateChaining::Equivalence,
         }),
-        just("fai").to(ParticleFamily::Fi {
+        just(['f', 'a', 'i'].map(PreProcessed)).to(ParticleFamily::Fi {
             var: FiVar::Next,
             chain_with: PredicateChaining::Equivalence,
         }),
-        just('f')
-            .ignore_then(just('i').ignored().or_not().then(arg_vowel))
+        letter('f')
+            .ignore_then(letter('i').ignored().or_not().then(arg_vowel))
             .map(|(i, var_i)| ParticleFamily::Fi {
                 var: FiVar::Var(var_i),
                 chain_with: if i.is_some() {
@@ -374,21 +388,33 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                     PredicateChaining::Sharing
                 },
             }),
-        just("fi").to(ParticleFamily::Fi {
+        just(['f', 'i'].map(PreProcessed)).to(ParticleFamily::Fi {
             var: FiVar::None,
             chain_with: PredicateChaining::Sharing,
         }),
     )));
-    let vei = pause.then(just("vei")).to(ParticleFamily::Vei);
-    let be = pause.then(just("be")).to(ParticleFamily::Be);
+    let vei = pause
+        .then(just(['v', 'e', 'i'].map(PreProcessed)))
+        .to(ParticleFamily::Vei);
+    let be = pause
+        .then(just(['b', 'e'].map(PreProcessed)))
+        .to(ParticleFamily::Be);
 
-    let pe = pause.then(just("pe")).to(ParticleFamily::Pe);
-    let pei = pause.then(just("pei")).to(ParticleFamily::Pei);
+    let pe = pause
+        .then(just(['p', 'e'].map(PreProcessed)))
+        .to(ParticleFamily::Pe);
+    let pei = pause
+        .then(just(['p', 'e', 'i'].map(PreProcessed)))
+        .to(ParticleFamily::Pei);
 
-    let bi = pause.then(just("bi")).to(ParticleFamily::Bi);
+    let bi = pause
+        .then(just(['b', 'i'].map(PreProcessed)))
+        .to(ParticleFamily::Bi);
     let zi = pause
-        .ignore_then(choice(["zi"].map(just)))
-        .map(|w| ParticleFamily::Zi(w.to_string()));
+        .ignore_then(choice(
+            ["zi"].map(|s| just(s.chars().map(PreProcessed).collect::<Vec<_>>())),
+        ))
+        .map(|w| ParticleFamily::Zi(w.into_iter().map(|PreProcessed(c)| c).collect()));
 
     let specific_particle = choice((pei, pe, be, vei, vi, fi, mi, si, bi, zi));
 
@@ -401,7 +427,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
 
     let root_mix = choice((
         medial_pair.map(|(a, b)| (a, Some(b))),
-        choice((just('h'), sonorant)).map(|c| (c, None)),
+        choice((letter('h'), sonorant)).map(|c| (c, None)),
     ))
     .then(vowel.repeated().at_least(1))
     .map(|((a, b), vowels)| iter::once(a).chain(b).chain(vowels).collect::<Vec<_>>());
@@ -418,15 +444,21 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                 required_string,
                 root_mix
                     .repeated()
-                    .chain::<Vec<char>, _, _>(required_string)
+                    .chain::<Vec<PreProcessed>, _, _>(required_string)
                     .flatten(),
             ))
-            .chain::<Vec<char>, _, _>(root_mix.repeated())
+            .chain::<Vec<PreProcessed>, _, _>(root_mix.repeated())
             .flatten()
             .then(sonorant.or_not()),
             sonorant.map(|s| (Vec::new(), Some(s))),
         )))
-        .map(|(a, (b, c))| a.into_iter().chain(b).chain(c).collect())
+        .map(|(a, (b, c))| {
+            a.into_iter()
+                .chain(b)
+                .chain(c)
+                .map(|PreProcessed(c)| c)
+                .collect()
+        })
         .map(|w: String| {
             let last = w.chars().last().unwrap();
             let chaining = if last == 'i' {
@@ -455,6 +487,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
             a.into_iter()
                 .chain(b.into_iter().flatten())
                 .chain(c)
+                .map(|PreProcessed(c)| c)
                 .collect()
         })
         .map(|w: String| {
