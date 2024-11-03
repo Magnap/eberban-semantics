@@ -2,10 +2,7 @@ type Res<T> = Result<T, Box<dyn std::error::Error>>;
 
 use std::time::Instant;
 
-use chumsky::{
-    error::{Cheap, Simple},
-    Parser,
-};
+use chumsky::{error::Cheap, Parser};
 use eberban::{
     expr::{to_expr, Predicate},
     lexer::lexer,
@@ -50,6 +47,10 @@ fn main() -> Res<()> {
         "mai vie vlu fie ge ga be vle via mai vi ge fi ga vei fie mai vi ge fi go",
         "mi ve ke be ke duna vo ke be ke mi vei bure ke",
         "geie va sae bleu tcu jveo mi fa ke via ka be seha jvao padgon cnue ka",
+        "mi duna va ke be mian ke fo ke be mi bure ke",
+        "jnu fniu tcuin",
+        "mai vi gie gia be gie gia",
+        "mai vi gie gia be mai gie gia",
     ];
 
     let lexer = lexer::<Cheap<_>>();
@@ -75,6 +76,7 @@ fn main() -> Res<()> {
         } else {
             println!("lexed in {} µs", lexing.as_micros());
         }
+        println!();
     }
     Ok(())
 }

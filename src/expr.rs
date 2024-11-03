@@ -203,10 +203,12 @@ fn to_expr_(
             if let Exposure::Explicit(vec) = &exposure {
                 for (i, (word, chain_with)) in vec.iter().enumerate() {
                     let mut var = *max_var;
-                    close_over.push(var);
                     *max_var += 1;
                     if let Some(v) = vars.get_mut(i) {
+                        close_over.push(var);
                         mem::swap(v, &mut var);
+                    } else {
+                        orig_new_vars.push(var);
                     }
                     let var = var;
 
@@ -358,10 +360,14 @@ fn to_expr_(
                 } else {
                     Predicate::And { preds }
                 };
-                orig_preds.push(Predicate::Exists {
-                    vars: new_vars,
-                    pred: Box::new(p),
-                });
+                if new_vars.is_empty() {
+                    orig_preds.push(p)
+                } else {
+                    orig_preds.push(Predicate::Exists {
+                        vars: new_vars,
+                        pred: Box::new(p),
+                    })
+                }
             }
         }
     }

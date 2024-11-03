@@ -213,7 +213,7 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
                 match c {
                     'k' => ParticleFamily::Ki(word),
                     'g' => ParticleFamily::Gi(PredicateWord {
-                        chaining: if c == 'i' {
+                        chaining: if word.starts_with("gi") {
                             ChainingBehavior {
                                 var: 0,
                                 chain_with: PredicateChaining::Sharing,
