@@ -14,6 +14,7 @@ pub enum Predicate {
         id: usize,
         apply_to: Vec<Var>,
     },
+    Not(Box<Predicate>),
     And {
         preds: Vec<Predicate>,
     },
@@ -49,6 +50,13 @@ impl std::fmt::Display for Predicate {
                         first = false;
                     }
                     write!(f, ")")
+                }
+            }
+            Predicate::Not(pred) => {
+                if matches!(**pred, Predicate::And { .. }) {
+                    write!(f, "¬({pred})")
+                } else {
+                    write!(f, "¬{pred}")
                 }
             }
             Predicate::And { preds } => {
@@ -163,6 +171,7 @@ fn to_expr_(
         PredicateTree::Binding {
             chaining: _,
             root,
+            negated,
             exposure,
             sharers,
             and,
@@ -236,7 +245,7 @@ fn to_expr_(
             let closure_needed = !close_over.is_empty();
             let mut new_new_vars = close_over;
             let mut new_preds = Vec::new();
-            let (new_vars, preds) = if closure_needed {
+            let (new_vars, preds) = if closure_needed || negated {
                 (&mut new_new_vars, &mut new_preds)
             } else {
                 (&mut *orig_new_vars, &mut *orig_preds)
@@ -323,27 +332,14 @@ fn to_expr_(
                 }
             }
 
-            if let Exposure::Explicit(vec) = &exposure {
-                for (word, _) in vec.iter() {
-                    symbol_table.get_mut(word).unwrap().pop();
-                }
-            }
-
-            if closure_needed {
-                let p = if new_preds.len() == 1 {
-                    new_preds.pop().unwrap()
-                } else {
-                    Predicate::And { preds: new_preds }
-                };
-                orig_preds.push(Predicate::Exists {
-                    vars: new_new_vars,
-                    pred: Box::new(p),
-                });
-            }
-
+            let preds = if negated {
+                &mut new_preds
+            } else {
+                &mut *orig_preds
+            };
             for p in and {
                 let mut new_vars = Vec::new();
-                let mut preds = Vec::new();
+                let mut new_preds = Vec::new();
                 to_expr_(
                     p,
                     PredicateChaining::Equivalence,
@@ -352,22 +348,51 @@ fn to_expr_(
                     max_var,
                     max_id,
                     symbol_table,
-                    &mut preds,
+                    &mut new_preds,
                 );
 
-                let p = if preds.len() == 1 {
-                    preds.pop().unwrap()
+                let p = if new_preds.len() == 1 {
+                    new_preds.pop().unwrap()
                 } else {
-                    Predicate::And { preds }
+                    Predicate::And { preds: new_preds }
                 };
                 if new_vars.is_empty() {
-                    orig_preds.push(p)
+                    preds.push(p)
                 } else {
-                    orig_preds.push(Predicate::Exists {
+                    preds.push(Predicate::Exists {
                         vars: new_vars,
                         pred: Box::new(p),
                     })
                 }
+            }
+
+            if let Exposure::Explicit(vec) = &exposure {
+                for (word, _) in vec.iter() {
+                    symbol_table.get_mut(word).unwrap().pop();
+                }
+            }
+
+            if closure_needed || negated {
+                let p = if new_preds.len() == 1 {
+                    new_preds.pop().unwrap()
+                } else {
+                    Predicate::And { preds: new_preds }
+                };
+
+                let p = if closure_needed {
+                    Predicate::Exists {
+                        vars: new_new_vars,
+                        pred: Box::new(p),
+                    }
+                } else {
+                    p
+                };
+                let p = if negated {
+                    Predicate::Not(Box::new(p))
+                } else {
+                    p
+                };
+                orig_preds.push(p);
             }
         }
     }

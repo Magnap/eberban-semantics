@@ -16,6 +16,7 @@ pub enum PredicateTree {
     Binding {
         chaining: ChainingBehavior,
         root: Box<PredicateTree>,
+        negated: bool,
         exposure: Exposure,
         sharers: Vec<BTreeSet<(PredicateChaining, PredicateTree)>>,
         and: BTreeSet<PredicateTree>,
@@ -35,6 +36,7 @@ impl PredicateTree {
             l @ PredicateTree::Leaf(_) => PredicateTree::Binding {
                 chaining: l.chaining_behavior(),
                 root: Box::new(l),
+                negated: false,
                 exposure: Exposure::Standard,
                 sharers: Vec::new(),
                 and: BTreeSet::new(),
@@ -129,8 +131,13 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
             let be = just(Word::Particle(ParticleFamily::Be));
             let argument_list = argument.repeated().then_ignore(be);
 
-            let binding = element
-                .clone()
+            let bi = just(Word::Particle(ParticleFamily::Bi)).to(true);
+            let zi = just(Word::Particle(ParticleFamily::Zi("zi".to_string()))).to(false);
+            let negation = choice((bi, zi));
+
+            let binding = negation
+                .or_not()
+                .then(element.clone())
                 .then(
                     vi.then(argument_list.clone().or_not())
                         .then(predicate_tree.clone())
@@ -143,21 +150,47 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                         .repeated(),
                 )
                 .then(predicate_tree.or_not())
-                .map(|((l, b), r)| {
-                    if matches!(l, PredicateTree::Leaf(_)) && b.is_empty() && r.is_none() {
+                .map(|(((n, l), b), r)| {
+                    let no_binding = n.is_none() && b.is_empty() && r.is_none();
+                    if no_binding {
                         l
                     } else {
-                        let (chaining, root, exposure, mut sharers, mut and) = match l.to_binding()
-                        {
-                            PredicateTree::Binding {
-                                chaining,
-                                root,
-                                exposure,
-                                sharers,
-                                and,
-                            } => (chaining, root, exposure, sharers, and),
-                            _ => unreachable!(),
-                        };
+                        let (chaining, root, negated, exposure, mut sharers, mut and) =
+                            match l.to_binding() {
+                                PredicateTree::Binding {
+                                    chaining,
+                                    root,
+                                    negated,
+                                    exposure,
+                                    sharers,
+                                    and,
+                                } => {
+                                    let root = if let Some(false) = n {
+                                        Box::new(match root.to_binding() {
+                                            PredicateTree::Binding {
+                                                chaining,
+                                                root,
+                                                negated,
+                                                exposure,
+                                                sharers,
+                                                and,
+                                            } => PredicateTree::Binding {
+                                                chaining,
+                                                root,
+                                                negated: !negated,
+                                                exposure,
+                                                sharers,
+                                                and,
+                                            },
+                                            _ => unreachable!(),
+                                        })
+                                    } else {
+                                        root
+                                    };
+                                    (chaining, root, negated, exposure, sharers, and)
+                                }
+                                _ => unreachable!(),
+                            };
 
                         let children = r
                             .into_iter()
@@ -183,6 +216,7 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                                             PredicateTree::Binding {
                                                 chaining,
                                                 root,
+                                                negated,
                                                 sharers,
                                                 and,
                                                 ..
@@ -190,6 +224,7 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                                                 exposure: Exposure::Explicit(args),
                                                 chaining,
                                                 root,
+                                                negated,
                                                 sharers,
                                                 and,
                                             },
@@ -221,6 +256,7 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                         PredicateTree::Binding {
                             chaining,
                             root,
+                            negated: negated ^ n.unwrap_or(false),
                             exposure,
                             sharers,
                             and,

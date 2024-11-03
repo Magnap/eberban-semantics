@@ -161,6 +161,8 @@ pub enum ParticleFamily {
         exposure: Exposure,
         chaining: ChainingBehavior,
     },
+    Bi,
+    Zi(String),
     Other(String),
 }
 
@@ -383,7 +385,12 @@ pub fn lexer<E: Error<char>>() -> impl Parser<char, Vec<Word>, Error = E> {
     let pe = pause.then(just("pe")).to(ParticleFamily::Pe);
     let pei = pause.then(just("pei")).to(ParticleFamily::Pei);
 
-    let specific_particle = choice((pei, pe, be, vei, vi, fi, mi, si));
+    let bi = pause.then(just("bi")).to(ParticleFamily::Bi);
+    let zi = pause
+        .ignore_then(choice(["zi"].map(just)))
+        .map(|w| ParticleFamily::Zi(w.to_string()));
+
+    let specific_particle = choice((pei, pe, be, vei, vi, fi, mi, si, bi, zi));
 
     let particle = choice((
         specific_particle,
