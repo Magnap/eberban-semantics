@@ -281,18 +281,21 @@ pub fn lexer<E: Error<PreProcessed>>() -> impl Parser<PreProcessed, Vec<Word>, E
             .map(|s| just(s.chars().map(PreProcessed).collect::<Vec<_>>())),
         ))
         .map(|w| {
-            let word = w.into_iter().map(|PreProcessed(c)| c).collect();
+            let word: String = w.into_iter().map(|PreProcessed(c)| c).collect();
             ParticleFamily::Mi(PredicateWord {
-                chaining: if &word == "mua" {
-                    ChainingBehavior {
+                chaining: match &*word {
+                    "mao" => ChainingBehavior {
+                        var: 0,
+                        chain_with: PredicateChaining::Equivalence,
+                    },
+                    "mua" => ChainingBehavior {
                         var: 1,
                         chain_with: PredicateChaining::Equivalence,
-                    }
-                } else {
-                    ChainingBehavior {
+                    },
+                    _ => ChainingBehavior {
                         var: 0,
                         chain_with: PredicateChaining::Sharing,
-                    }
+                    },
                 },
                 word,
             })
