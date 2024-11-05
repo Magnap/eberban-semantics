@@ -62,6 +62,10 @@ fn main() -> Res<()> {
         "zi tce ge",
         "bi tce ge",
         "bi zi tce ge",
+        "mi zi bure meon",
+        "mi zi pe bure meon",
+        "mi zi pe zi pe bure meon",
+        "zi pe mai vi zi ke fi zi ka",
     ];
 
     let lexer = lexer::<Cheap<_>>();

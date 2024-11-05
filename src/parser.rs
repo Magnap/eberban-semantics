@@ -12,10 +12,9 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PredicateTree {
-    Leaf(PredicateWord),
-    Negation {
+    Leaf {
+        word: PredicateWord,
         negation: Negation,
-        pred: Box<PredicateTree>,
     },
     Binding {
         chaining: ChainingBehavior,
@@ -30,19 +29,20 @@ pub enum PredicateTree {
 impl PredicateTree {
     pub fn chaining_behavior(&self) -> ChainingBehavior {
         match self {
-            PredicateTree::Leaf(PredicateWord { chaining, .. }) => *chaining,
-            PredicateTree::Negation { pred, .. } => pred.chaining_behavior(),
+            PredicateTree::Leaf {
+                word: PredicateWord { chaining, .. },
+                ..
+            } => *chaining,
             PredicateTree::Binding { chaining, .. } => *chaining,
         }
     }
     pub fn to_binding(self) -> Self {
         match self {
             b @ PredicateTree::Binding { .. } => b,
-            PredicateTree::Negation { negation, pred } => pred.to_binding().negate(negation),
-            l @ PredicateTree::Leaf(_) => PredicateTree::Binding {
+            l @ PredicateTree::Leaf { negation, .. } => PredicateTree::Binding {
                 chaining: l.chaining_behavior(),
                 root: Box::new(l),
-                negation: Negation::None,
+                negation,
                 exposure: Exposure::Standard,
                 sharers: Vec::new(),
                 and: BTreeSet::new(),
@@ -54,17 +54,10 @@ impl PredicateTree {
             self
         } else {
             match self {
-                l @ PredicateTree::Leaf(_) => PredicateTree::Negation {
-                    negation: orig_negation,
-                    pred: Box::new(l),
+                PredicateTree::Leaf { word, negation } => PredicateTree::Leaf {
+                    word,
+                    negation: orig_negation ^ negation,
                 },
-                PredicateTree::Negation { negation, pred } => {
-                    let negation = orig_negation ^ negation;
-                    match negation {
-                        Negation::None => *pred,
-                        negation => PredicateTree::Negation { negation, pred },
-                    }
-                }
                 PredicateTree::Binding {
                     chaining,
                     root,
@@ -109,12 +102,19 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
     });
     let predicate_tree =
         recursive(|predicate_tree| {
-            let leaf = predicate.map(PredicateTree::Leaf);
+            let leaf = predicate.map(|word| PredicateTree::Leaf {
+                word,
+                negation: Negation::None,
+            });
             let pe_pei = predicate_tree.clone().delimited_by(
                 just(Word::Particle(ParticleFamily::Pe)),
                 just(Word::Particle(ParticleFamily::Pei)).or_not(),
             );
 
+            let zi = just(Word::Particle(ParticleFamily::Zi("zi".to_string())))
+                .ignored()
+                .repeated()
+                .map(|x| x.len());
             let si = filter(|w: &Word| matches!(w, Word::Particle(ParticleFamily::Si { .. }))).map(
                 |s| match s {
                     Word::Particle(ParticleFamily::Si { exposure, chaining }) => {
@@ -123,26 +123,33 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                     _ => unreachable!(),
                 },
             );
-            let element = si
-                .or_not()
+            let element = zi
+                .then(si.or_not())
                 .then(choice((leaf, pe_pei.clone())))
-                .map(|(s, p)| match s {
-                    None => p,
-                    Some((exposure, chaining)) => {
-                        let mut e = p.to_binding();
-                        match &mut e {
-                            PredicateTree::Binding {
-                                chaining: old_chaining,
-                                exposure: old_exposure,
-                                ..
-                            } => {
-                                *old_chaining = chaining;
-                                *old_exposure = exposure;
+                .map(|((z, s), p)| {
+                    let p = match s {
+                        None => p,
+                        Some((exposure, chaining)) => {
+                            let mut e = p.to_binding();
+                            match &mut e {
+                                PredicateTree::Binding {
+                                    chaining: old_chaining,
+                                    exposure: old_exposure,
+                                    ..
+                                } => {
+                                    *old_chaining = chaining;
+                                    *old_exposure = exposure;
+                                }
+                                _ => unreachable!(),
                             }
-                            _ => unreachable!(),
+                            e
                         }
-                        e
-                    }
+                    };
+                    p.negate(if z % 2 == 0 {
+                        Negation::None
+                    } else {
+                        Negation::Short
+                    })
                 });
 
             let vi = filter(|w: &Word| matches!(w, Word::Particle(ParticleFamily::Vi { .. }))).map(
@@ -171,14 +178,13 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
             let be = just(Word::Particle(ParticleFamily::Be));
             let argument_list = argument.repeated().then_ignore(be);
 
-            let bi = just(Word::Particle(ParticleFamily::Bi)).to(Negation::Long);
-            let zi = just(Word::Particle(ParticleFamily::Zi("zi".to_string()))).to(Negation::Short);
-
-            let binding = bi
+            let bi = just(Word::Particle(ParticleFamily::Bi))
                 .ignored()
                 .repeated()
-                .then(zi.ignored().repeated())
-                .then(element.clone())
+                .map(|x| x.len());
+
+            let binding = bi
+                .then(element)
                 .then(
                     vi.then(argument_list.clone().or_not())
                         .then(predicate_tree.clone())
@@ -191,24 +197,28 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                         .repeated(),
                 )
                 .then(predicate_tree.or_not())
-                .map(|((((bi, zi), l), b), r)| {
-                    let n = Negation::new(zi.len() % 2 == 1, bi.len() % 2 == 1);
+                .map(|(((bi, l), b), r)| {
+                    let negation = if bi % 2 == 0 {
+                        Negation::None
+                    } else {
+                        Negation::Long
+                    };
                     let no_binding = b.is_empty() && r.is_none();
                     if no_binding {
-                        l.negate(n)
+                        l.negate(negation)
                     } else {
-                        let (chaining, root, negation, exposure, mut sharers, mut and) =
-                            match l.to_binding().negate(n) {
-                                PredicateTree::Binding {
-                                    chaining,
-                                    root,
-                                    negation,
-                                    exposure,
-                                    sharers,
-                                    and,
-                                } => (chaining, root, negation, exposure, sharers, and),
-                                _ => unreachable!(),
-                            };
+                        let (chaining, root, exposure, mut sharers, mut and) = match l.to_binding()
+                        {
+                            PredicateTree::Binding {
+                                chaining,
+                                root,
+                                negation: _,
+                                exposure,
+                                sharers,
+                                and,
+                            } => (chaining, root, exposure, sharers, and),
+                            _ => unreachable!(),
+                        };
 
                         let children = r
                             .into_iter()
@@ -234,7 +244,7 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                                             PredicateTree::Binding {
                                                 chaining,
                                                 root,
-                                                negation: negated,
+                                                negation,
                                                 sharers,
                                                 and,
                                                 ..
@@ -242,7 +252,7 @@ pub fn parser<E: Error<Word> + 'static>() -> impl Parser<Word, PredicateTree, Er
                                                 exposure: Exposure::Explicit(args),
                                                 chaining,
                                                 root,
-                                                negation: negated,
+                                                negation,
                                                 sharers,
                                                 and,
                                             },

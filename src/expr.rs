@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, mem};
 
-use crate::{parser::PredicateTree, Exposure, PredicateChaining};
+use crate::{parser::PredicateTree, Exposure, Negation, PredicateChaining};
 
 pub type Var = usize;
 
@@ -160,64 +160,31 @@ fn to_expr_(
     orig_preds: &mut Vec<Predicate>,
 ) {
     match tree {
-        PredicateTree::Leaf(word) => orig_preds.push(Predicate::Leaf {
-            word: word.word.clone(),
-            id: *symbol_table
-                .entry(word.word)
-                .or_insert_with(|| {
-                    let i = *max_id;
-                    *max_id += 1;
-                    vec![i]
-                })
-                .last()
-                .unwrap(),
-            apply_to: vars,
-        }),
-        PredicateTree::Negation { negation, pred } => {
-            let mut new_new_vars = Vec::new();
-            let new_vars = if negation.long() {
-                &mut new_new_vars
-            } else {
-                orig_new_vars
-            };
-            let mut preds = Vec::new();
-            to_expr_(
-                *pred,
-                PredicateChaining::Equivalence,
-                vars,
-                new_vars,
-                max_var,
-                max_id,
-                symbol_table,
-                &mut preds,
-            );
-            let p = if preds.len() == 1 {
-                preds.pop().unwrap()
-            } else {
-                Predicate::And { preds }
+        PredicateTree::Leaf { word, negation } => {
+            let p = Predicate::Leaf {
+                word: word.word.clone(),
+                id: *symbol_table
+                    .entry(word.word)
+                    .or_insert_with(|| {
+                        let i = *max_id;
+                        *max_id += 1;
+                        vec![i]
+                    })
+                    .last()
+                    .unwrap(),
+                apply_to: vars,
             };
             let p = if negation.short() {
-                match p {
-                    Predicate::ShortNot(pred) => *pred,
-                    p => Predicate::ShortNot(Box::new(p)),
-                }
+                Predicate::ShortNot(Box::new(p))
             } else {
                 p
-            };
-            let p = if !negation.long() || new_vars.is_empty() {
-                p
-            } else {
-                Predicate::Exists {
-                    vars: new_new_vars,
-                    pred: Box::new(p),
-                }
             };
             let p = if negation.long() {
                 Predicate::LongNot(Box::new(p))
             } else {
                 p
             };
-            orig_preds.push(p);
+            orig_preds.push(p)
         }
         PredicateTree::Binding {
             chaining: _,
@@ -296,21 +263,14 @@ fn to_expr_(
             let closure_needed = !close_over.is_empty();
             let mut new_new_vars = close_over;
             let mut new_preds = Vec::new();
-            let (new_vars, preds) = if closure_needed || negation.long() {
+            let (new_vars, preds) = if closure_needed || negation != Negation::None {
                 (&mut new_new_vars, &mut new_preds)
             } else {
                 (&mut *orig_new_vars, &mut *orig_preds)
             };
 
             to_expr_(
-                if negation.short() {
-                    PredicateTree::Negation {
-                        negation: crate::Negation::Short,
-                        pred: root,
-                    }
-                } else {
-                    *root
-                },
+                *root,
                 PredicateChaining::Equivalence,
                 vars.clone(),
                 new_vars,
@@ -390,7 +350,7 @@ fn to_expr_(
                 }
             }
 
-            let preds = if negation.long() {
+            let preds = if negation != Negation::None {
                 &mut new_preds
             } else {
                 &mut *orig_preds
@@ -430,13 +390,18 @@ fn to_expr_(
                 }
             }
 
-            if closure_needed || negation.long() {
+            if closure_needed || negation != Negation::None {
                 let p = if new_preds.len() == 1 {
                     new_preds.pop().unwrap()
                 } else {
                     Predicate::And { preds: new_preds }
                 };
 
+                let p = if negation.short() {
+                    Predicate::ShortNot(Box::new(p))
+                } else {
+                    p
+                };
                 let p = if closure_needed {
                     Predicate::Exists {
                         vars: new_new_vars,
