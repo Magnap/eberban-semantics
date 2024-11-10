@@ -285,7 +285,7 @@ pub fn lexer<E: Error<PreProcessed>>() -> impl Parser<PreProcessed, Vec<Word>, E
             ParticleFamily::Mi(PredicateWord {
                 chaining: match &*word {
                     "mao" => ChainingBehavior {
-                        var: 0,
+                        var: 1,
                         chain_with: PredicateChaining::Equivalence,
                     },
                     "mua" => ChainingBehavior {
